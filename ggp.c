@@ -70,7 +70,7 @@ void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int curr
         }
     }
     if (removed_vertex_index == -1) {
-        printf("Warning: Vertex %d not found in boundary list\n", removed_vertex);
+        printf("WIERZCHOLEK %d NIE ZNALEZIONY W BOUNDRY LIST\n", removed_vertex);
         return;
     }
     //sledzony jest stan znalezionego wierzcholka do zastapienia usunietego w boundry
@@ -179,6 +179,333 @@ int count_edge_cuts(Graph* graph, int* partition){
     return cuts/2;
 }
 
+// For the refinement phase, calculate cut change when moving v from from_part to to_part
+int calculate_cut_change(Graph* graph, int* partition, int v, int from_part, int to_part) {
+    int cut_change = 0;
+    
+    for (int i = graph->xadj[v]; i < graph->xadj[v+1]; i++) {
+        int neighbor = graph->adjncy[i];
+        
+        if (partition[neighbor] == from_part) {
+            // Was not a cut, will become a cut
+            cut_change++;
+        }
+        else if (partition[neighbor] == to_part) {
+            // Was a cut, will no longer be a cut
+            cut_change--;
+        }
+        // No change for neighbors in other partitions
+    }
+    
+    return cut_change; // Positive means more cuts, negative means fewer cuts
+}
+
+int compare_vertex_moves(const void* a, const void* b) {
+    VertexMove* va = (VertexMove*)a;
+    VertexMove* vb = (VertexMove*)b;
+    return va->cut_change - vb->cut_change;
+}
+
+void refine_partitions(Graph* graph, int* partition, int num_parts, float imbalance) {
+    // Calculate partition size constraints
+    int vertices_per_part = graph->num_vertices / num_parts;
+    int max_part_size = (int)(vertices_per_part * (1.0 + imbalance));
+    int min_part_size = (int)(vertices_per_part * (1.0 - imbalance));
+    if (min_part_size < 1) min_part_size = 1;
+    
+    // Calculate current partition sizes
+    int part_sizes[num_parts];
+    memset(part_sizes, 0, sizeof(int) * num_parts);
+    for (int i = 0; i < graph->num_vertices; i++) {
+        part_sizes[partition[i]]++;
+    }
+
+    // Determine maximum moves per iteration (more flexible based on imbalance)
+    int max_moves_per_iteration = (int)(vertices_per_part * imbalance) + 1;
+    if (max_moves_per_iteration < 1) max_moves_per_iteration = 1;
+    
+    // --- Phase 1: Balance extremely overloaded partitions first
+    int phase1_iterations = 0;
+    int max_phase1_iterations = 10;
+    
+    while (phase1_iterations++ < max_phase1_iterations) {
+        int moves_made_total = 0;
+        
+        // Handle severely overloaded partitions first
+        for (int p = 0; p < num_parts; p++) {
+            if (part_sizes[p] > max_part_size) {
+                // Define max size for vertex move arrays based on overload
+                int excess_vertices = part_sizes[p] - max_part_size;
+                int move_array_size = excess_vertices * 2; // Use a reasonable multiplier
+                if (move_array_size > graph->num_vertices) 
+                    move_array_size = graph->num_vertices;
+                
+                VertexMove moves[move_array_size];
+                int move_count = 0;
+                
+                #pragma omp parallel
+                {
+                    // Thread-local arrays for collecting moves
+                    VertexMove private_moves[move_array_size];
+                    int private_move_count = 0;
+                    
+                    #pragma omp for nowait
+                    for (int v = 0; v < graph->num_vertices; v++) {
+                        if (partition[v] != p) continue;
+                        
+                        int best_dest = -1;
+                        int best_cut_change = INT_MAX;
+                        
+                        // Create a map of neighboring partitions for this vertex
+                        int neighbor_parts[num_parts];
+                        memset(neighbor_parts, 0, sizeof(int) * num_parts);
+                        
+                        for (int j = graph->xadj[v]; j < graph->xadj[v+1]; j++) {
+                            int neighbor = graph->adjncy[j];
+                            neighbor_parts[partition[neighbor]]++;
+                        }
+                        
+                        // Find best destination partition
+                        for (int d = 0; d < num_parts; d++) {
+                            if (d == p) continue;
+                            if (part_sizes[d] >= max_part_size) continue;
+                            
+                            // Calculate gain based on actual cut changes
+                            int cut_change = calculate_cut_change(graph, partition, v, p, d);
+                            
+                            // Prioritize moves to partitions where the vertex has more neighbors
+                            if (cut_change < best_cut_change || 
+                                (cut_change == best_cut_change && neighbor_parts[d] > neighbor_parts[best_dest])) {
+                                best_cut_change = cut_change;
+                                best_dest = d;
+                            }
+                        }
+                        
+                        if (best_dest != -1 && private_move_count < move_array_size) {
+                            private_moves[private_move_count++] = (VertexMove){v, best_dest, best_cut_change};
+                        }
+                    }
+                    
+                    #pragma omp critical
+                    {
+                        for (int i = 0; i < private_move_count && move_count < move_array_size; i++) {
+                            moves[move_count++] = private_moves[i];
+                        }
+                    }
+                }
+                
+                if (move_count > 0) {
+                    qsort(moves, move_count, sizeof(VertexMove), compare_vertex_moves);
+                    
+                    int moves_to_make = (part_sizes[p] - max_part_size) < move_count ? 
+                                        (part_sizes[p] - max_part_size) : move_count;
+                    
+                    for (int i = 0; i < moves_to_make; i++) {
+                        int v = moves[i].vertex;
+                        int dest = moves[i].best_destination;
+                        
+                        // Ensure destination partition won't exceed max size
+                        if (part_sizes[dest] >= max_part_size) continue;
+                        
+                        partition[v] = dest;
+                        part_sizes[p]--;
+                        part_sizes[dest]++;
+                        moves_made_total++;
+                        
+                        if (part_sizes[p] <= max_part_size) break;
+                    }
+                }
+                
+                // Break if this partition is now within bounds
+                if (part_sizes[p] <= max_part_size) break;
+            }
+        }
+        
+        if (moves_made_total == 0) {
+            break; // No moves made, all partitions within max size
+        }
+    }
+    
+    // --- Phase 2: Optimize cut edges while maintaining balance
+    int max_refine_iterations = 10;
+    int global_improvement = 1;
+    
+    for (int iter = 0; iter < max_refine_iterations && global_improvement; iter++) {
+        global_improvement = 0;
+        
+        // First, identify underloaded partitions that could accept more vertices
+        int can_grow[num_parts];
+        memset(can_grow, 0, sizeof(int) * num_parts);
+        for (int p = 0; p < num_parts; p++) {
+            can_grow[p] = (part_sizes[p] < max_part_size);
+        }
+        
+        // Process partitions in order (can be randomized for better results)
+        for (int src_part = 0; src_part < num_parts; src_part++) {
+            // Skip partitions at minimum size
+            if (part_sizes[src_part] <= min_part_size) continue;
+            
+            // Estimate max potential moves from this partition
+            int max_potential_moves = part_sizes[src_part] - min_part_size;
+            if (max_potential_moves > graph->num_vertices / num_parts)
+                max_potential_moves = graph->num_vertices / num_parts;
+            
+            VertexMove moves[max_potential_moves];
+            int move_count = 0;
+            
+            #pragma omp parallel
+            {
+                VertexMove private_moves[max_potential_moves];
+                int private_move_count = 0;
+                
+                #pragma omp for nowait
+                for (int v = 0; v < graph->num_vertices; v++) {
+                    if (partition[v] != src_part) continue;
+                    
+                    int best_dest = -1;
+                    int best_cut_change = 0; // Only consider moves that improve cuts
+                    
+                    // Track connectivity to each partition
+                    int connections[num_parts];
+                    memset(connections, 0, sizeof(int) * num_parts);
+                    
+                    // Count connections to each partition
+                    for (int j = graph->xadj[v]; j < graph->xadj[v+1]; j++) {
+                        int neighbor = graph->adjncy[j];
+                        connections[partition[neighbor]]++;
+                    }
+                    
+                    // Consider all possible destination partitions
+                    for (int dest_part = 0; dest_part < num_parts; dest_part++) {
+                        if (dest_part == src_part) continue;
+                        if (!can_grow[dest_part]) continue;
+                        
+                        // Calculate gain when moving v from src_part to dest_part
+                        int cut_change = connections[dest_part] - (connections[src_part] + 
+                                        (graph->xadj[v+1] - graph->xadj[v]) - connections[dest_part] - connections[src_part]);
+                        
+                        if (cut_change < best_cut_change) {
+                            best_cut_change = cut_change;
+                            best_dest = dest_part;
+                        }
+                    }
+                    
+                    if (best_dest != -1 && best_cut_change < 0 && private_move_count < max_potential_moves) {
+                        private_moves[private_move_count++] = (VertexMove){v, best_dest, best_cut_change};
+                    }
+                }
+                
+                #pragma omp critical
+                {
+                    for (int i = 0; i < private_move_count && move_count < max_potential_moves; i++) {
+                        moves[move_count++] = private_moves[i];
+                    }
+                }
+            }
+            
+            if (move_count > 0) {
+                // Sort moves by cut improvement (most negative first)
+                qsort(moves, move_count, sizeof(VertexMove), compare_vertex_moves);
+                
+                // Limit moves per iteration to control convergence
+                int moves_to_make = (move_count < max_moves_per_iteration) ? 
+                                   move_count : max_moves_per_iteration;
+                
+                // Apply the best moves that reduce edge cuts
+                for (int i = 0; i < moves_to_make; i++) {
+                    if (moves[i].cut_change >= 0) break; // Stop if no more improvements
+                    
+                    int v = moves[i].vertex;
+                    int dest = moves[i].best_destination;
+                    
+                    // Safety checks
+                    if (part_sizes[src_part] <= min_part_size) break;
+                    if (part_sizes[dest] >= max_part_size) continue;
+                    
+                    // Apply the move
+                    partition[v] = dest;
+                    part_sizes[src_part]--;
+                    part_sizes[dest]++;
+                    global_improvement = 1;
+                    
+                    // Update can_grow status if destination becomes full
+                    if (part_sizes[dest] >= max_part_size) {
+                        can_grow[dest] = 0;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Phase 3: Final balancing pass
+    // Try to balance partition sizes without increasing cuts too much
+    int balance_iterations = 0;
+    int max_balance_iterations = 5;
+    
+    while (balance_iterations++ < max_balance_iterations) {
+        // Find smallest and largest partitions
+        int min_idx = 0, max_idx = 0;
+        for (int p = 1; p < num_parts; p++) {
+            if (part_sizes[p] < part_sizes[min_idx]) min_idx = p;
+            if (part_sizes[p] > part_sizes[max_idx]) max_idx = p;
+        }
+        
+        // Check if we need to balance
+        if (part_sizes[max_idx] <= max_part_size && part_sizes[min_idx] >= min_part_size) {
+            break; // Already balanced within constraints
+        }
+        
+        // Try to move vertices from largest to smallest partition
+        if (part_sizes[max_idx] > vertices_per_part && part_sizes[min_idx] < vertices_per_part) {
+            int max_move_candidates = part_sizes[max_idx] - vertices_per_part;
+            VertexMove moves[max_move_candidates];
+            int move_count = 0;
+            
+            #pragma omp parallel
+            {
+                VertexMove private_moves[max_move_candidates];
+                int private_move_count = 0;
+                
+                #pragma omp for nowait
+                for (int v = 0; v < graph->num_vertices; v++) {
+                    if (partition[v] != max_idx) continue;
+                    
+                    int cut_change = calculate_cut_change(graph, partition, v, max_idx, min_idx);
+                    
+                    if (private_move_count < max_move_candidates) {
+                        private_moves[private_move_count++] = (VertexMove){v, min_idx, cut_change};
+                    }
+                }
+                
+                #pragma omp critical
+                {
+                    for (int i = 0; i < private_move_count && move_count < max_move_candidates; i++) {
+                        moves[move_count++] = private_moves[i];
+                    }
+                }
+            }
+            
+            if (move_count > 0) {
+                qsort(moves, move_count, sizeof(VertexMove), compare_vertex_moves);
+                
+                int moves_needed = (part_sizes[max_idx] - vertices_per_part) < 
+                                 (vertices_per_part - part_sizes[min_idx]) ?
+                                 (part_sizes[max_idx] - vertices_per_part) :
+                                 (vertices_per_part - part_sizes[min_idx]);
+                
+                moves_needed = moves_needed < move_count ? moves_needed : move_count;
+                
+                for (int i = 0; i < moves_needed; i++) {
+                    int v = moves[i].vertex;
+                    partition[v] = min_idx;
+                    part_sizes[max_idx]--;
+                    part_sizes[min_idx]++;
+                }
+            }
+        }
+    }
+}
+
 int* greedy_partition(Graph* graph, float imbalance, int num_parts){
     int* partition = (int*)calloc(graph->num_vertices, sizeof(int));
     BoundryList boundry;
@@ -245,6 +572,7 @@ int* greedy_partition(Graph* graph, float imbalance, int num_parts){
         }
         free(boundry.vertices);
     }
+    refine_partitions(graph, partition, num_parts, imbalance);
     return partition;
 }
 
