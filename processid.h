@@ -18,14 +18,18 @@ typedef struct {
     int capacity;
 } LineContainer;
 
+typedef struct {
+    Graph* graphs;      // Wskaźnik do tablicy grafów
+    int num_graphs;     // Liczba grafów w tablicy
+} GraphList;
 
 char* read_line(FILE* file); 
-Graph* init_graph();
 LineContainer* create_line_container();
 int add_line(LineContainer* container, char* line);
 Graph* init_graph_list(int count);
 Graph assign_values(LineContainer* container, int num_line);
 void read_mltp_graphs(Graph* graph_list, LineContainer* container);
+
 
 
 
