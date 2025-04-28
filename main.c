@@ -2,9 +2,12 @@
 #include <stdlib.h>
 #include "processid.h"
 #include "arg_parser.h"
+#include "ggp.h"
+#include "output_file.h"
 
 
 int main(int argc, char **argv) {
+    srand(time(NULL));
     // Parsowanie argumentów wiersza poleceń
     if (parse_arguments(argc, argv) != 0) {
         return 1;
@@ -46,6 +49,41 @@ int main(int argc, char **argv) {
                i, graph_list.graphs[i].num_vertices, graph_list.graphs[i].num_edges);
     }
     
+    //dane do podzialu
+    double imabalance = args->margin;
+    int num_parts = args->parts;
+    int num_tries = 10;
+    char decision = args->format[0];
+    char* output_file = args->output;
+    //podzial grafów
+    for(int graph = 0; graph < graph_list.num_graphs; graph++){
+        if(graph_list.graphs[graph].num_vertices < 10000){
+            int* best_partition = (int*)calloc(graph_list.graphs[graph].num_vertices, sizeof(int));
+            int best_cuts = multi_start_greedy_partition(&graph_list.graphs[graph], best_partition, imabalance,
+            num_parts, num_tries);
+            //wyswietlanie podziału
+            display_partition(&graph_list.graphs[graph], best_partition, num_parts, best_cuts);
+            switch (decision)
+            {
+            case 't':
+                getResult_txt(&graph_list.graphs[graph], container, best_partition, num_parts, output_file);
+                break;
+            
+            case 'b':
+                break;
+            
+            default:
+                break;
+            }
+            free(best_partition);
+        }
+        else{
+            //metis
+        }
+    }
+
+
+
     // Zwolnienie zasobów
     for (int i = 0; i < graph_list.num_graphs; i++) {
         free(graph_list.graphs[i].xadj);

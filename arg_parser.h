@@ -6,7 +6,7 @@
 struct arguments {
     char *input;
     int parts;
-    int margin;
+    double margin;
     char *output;
     char *format;
 };

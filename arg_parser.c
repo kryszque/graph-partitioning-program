@@ -36,7 +36,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
       arguments->input = arg;
       break;
     case 'p':
-      arguments->parts= atoi(arg);
+      arguments->parts= atof(arg)/100;
       break;
     case 'm':
       arguments->margin = atoi(arg);
@@ -79,7 +79,7 @@ int parse_arguments(int argc, char **argv)
   arguments.input = NULL;
   arguments.output = NULL;
   arguments.parts = 1;
-  arguments.margin = 10;
+  arguments.margin = 0.1;
   arguments.format = "txt";
 
   // Parse arguments
