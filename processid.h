@@ -26,9 +26,9 @@ typedef struct {
 char* read_line(FILE* file); 
 LineContainer* create_line_container();
 int add_line(LineContainer* container, char* line);
-Graph* init_graph_list(int count);
-Graph assign_values(LineContainer* container, int num_line);
-void read_mltp_graphs(Graph* graph_list, LineContainer* container);
+Graph* init_graph();
+Graph* assign_values(LineContainer* container, Graph* graph, int num_line);
+//void read_mltp_graphs(Graph* graph_list, LineContainer* container);
 
 
 

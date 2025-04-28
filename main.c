@@ -32,25 +32,28 @@ int main(int argc, char **argv) {
     fclose(input_file);
       printf("test3\n");
     // Utworzenie struktury GraphList
-    GraphList graph_list;
-
-    graph_list.num_graphs = container->num_lines - 4;
+    //GraphList graph_list;
+    //graph_list.num_graphs = container->num_lines - 4;
     
-    if (graph_list.num_graphs <= 0) {
-        fprintf(stderr, "Error: Not enough lines to process graphs\n");
-        return 1;
-    }
+    //if (graph_list.num_graphs <= 0) {
+      //  fprintf(stderr, "Error: Not enough lines to process graphs\n");
+        //return 1;
+    //}
       printf("test3.5\n");
     // Inicjalizacja tablicy grafów
-    graph_list.graphs = init_graph_list(graph_list.num_graphs);
-    read_mltp_graphs(graph_list.graphs, container);
+    //graph_list.graphs = init_graph_list(graph_list.num_graphs);
+    //read_mltp_graphs(graph_list.graphs, container);
+    Graph* graph = init_graph();
+    graph = assign_values(container, graph, 4);
     printf("test4\n");
     // Wyświetlenie podstawowych informacji o grafach
-    printf("Graph List contains %d graphs:\n", graph_list.num_graphs);
+    /*printf("Graph List contains %d graphs:\n", graph_list.num_graphs);
     for (int i = 0; i < graph_list.num_graphs; i++) {
         printf("Graph %d: %d vertices, %d edges\n", 
                i, graph_list.graphs[i].num_vertices, graph_list.graphs[i].num_edges);
-    }
+    }*/
+   printf("Graph: %d vertices, %d edges\n", 
+               graph->num_vertices, graph->num_edges);
       printf("test5\n");
     //dane do podzialu
     double imabalance = args->margin;
@@ -59,8 +62,8 @@ int main(int argc, char **argv) {
     char decision = args->format[0];
     char* output_file = args->output;
     //podzial grafów
-    for(int graph = 0; graph < graph_list.num_graphs; graph++){
-        if(graph_list.graphs[graph].num_vertices < 10000){
+    /*for(int graph = 0; graph < graph_list.num_graphs; graph++){
+        if(graph->num_vertices < 10000){
             int* best_partition = (int*)calloc(graph_list.graphs[graph].num_vertices, sizeof(int));
             int best_cuts = multi_start_greedy_partition(&graph_list.graphs[graph], best_partition, imabalance,
             num_parts, num_tries);
@@ -83,10 +86,33 @@ int main(int argc, char **argv) {
         else{
             //metis
         }
-    }
+    }*/
+   if(graph->num_vertices < 10000){
+            int* best_partition = (int*)calloc(graph->num_vertices, sizeof(int));
+            int best_cuts = multi_start_greedy_partition(graph, best_partition, imabalance,
+            num_parts, num_tries);
+            //wyswietlanie podziału
+            display_partition(graph, best_partition, num_parts, best_cuts);
+            switch (decision)
+            {
+            case 't':
+                getResult_txt(graph, container, best_partition, num_parts, output_file);
+                break;
+            
+            case 'b':
+                break;
+            
+            default:
+                break;
+            }
+            free(best_partition);
+        }
+        else{
+            //metis
+        }
     printf("test6\n");
 
-
+/*
     // Zwolnienie zasobów
     for (int i = 0; i < graph_list.num_graphs; i++) {
         free(graph_list.graphs[i].xadj);
@@ -98,7 +124,7 @@ int main(int argc, char **argv) {
         free(container->lines[i]);
     }
     free(container->lines);
-    free(container);
+    free(container);*/
     
     return 0;
 }
