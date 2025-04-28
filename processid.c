@@ -1,13 +1,8 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
+#include "processid.h"
 #include "arg_parser.h"
-
-typedef struct {
-    int num_vertices;
-    int num_edges;
-    int *xadj;
-    int *adjncy;
-} Graph;
 
 
 char* read_line(FILE* file) {
@@ -37,8 +32,140 @@ char* read_line(FILE* file) {
         free(line);
         return NULL;
     }
+    line[curr_len] = '\0';
+
     return line;
 
+}
+
+Graph* init_graph(){
+    Graph* graph = malloc(sizeof(Graph));
+    graph->num_edges = 0;
+    graph->num_vertices = 0;
+    graph->xadj_capacity = 2048;
+    graph->adjncy_capacity = 2048;
+    graph->xadj = malloc(graph->xadj_capacity * sizeof(int));
+    graph->adjncy = malloc(graph->adjncy_capacity * sizeof(int));
+
+    return graph;
+}
+
+LineContainer* create_line_container(){
+    LineContainer* container = malloc(sizeof(LineContainer));
+    container->capacity = 10;
+    container->lines = malloc(container->capacity * sizeof(char*));
+    container->num_lines = 0;
+    return container;
+}
+
+int add_line(LineContainer* container, char* line){
+    if(container->num_lines >= container->capacity) {
+        container->capacity *= 2;
+        char** new_lines = realloc(container->lines, container->capacity * sizeof(char*));
+
+        container->lines = new_lines;
+    }
+    container->lines[container->num_lines++] = line;
+    return 0;
+}
+
+Graph* init_graph_list(int count){
+    Graph* graph_list = malloc(count * sizeof(Graph));
+    for (int i = 0; i < count; i++) {
+        graph_list[i].num_edges = 0;
+        graph_list[i].num_vertices = 0;
+        graph_list[i].xadj_capacity = 2048;
+        graph_list[i].adjncy_capacity = 2048;
+        graph_list[i].xadj = malloc(graph_list[i].xadj_capacity * sizeof(int));
+        graph_list[i].adjncy = malloc(graph_list[i].adjncy_capacity * sizeof(int));
+    }
+
+    return graph_list;
+}
+
+
+Graph assign_values(LineContainer* container, int num_line) {
+    Graph graph;
+    graph.num_vertices = 0;
+    graph.num_edges = 0;
+    graph.xadj_capacity = 2048;
+    graph.adjncy_capacity = 2048;
+    graph.xadj = malloc(graph.xadj_capacity * sizeof(int));
+    graph.adjncy = malloc(graph.adjncy_capacity * sizeof(int));
+    
+    if (graph.xadj == NULL || graph.adjncy == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    
+    // Count vertices from line 1
+    char* line = container->lines[1];
+    graph.num_vertices++;
+    for(int i=0; line[i] != '\0'; i++){
+        if(line[i] == ';') graph.num_vertices++;
+    }
+    
+    // Process adjncy data
+    char* adjncy = strdup(container->lines[3]);
+    if (adjncy == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    
+    char* token = strtok(adjncy, ";");
+    int adjIdx = 0;
+
+    while(token != NULL){
+        if (adjIdx >= graph.adjncy_capacity) {
+            graph.adjncy_capacity *= 2;
+            int* new_adjncy = realloc(graph.adjncy, graph.adjncy_capacity * sizeof(int));
+            if (new_adjncy == NULL) {
+                fprintf(stderr, "Memory reallocation failed\n");
+                free(adjncy);
+                exit(1);
+            }
+            graph.adjncy = new_adjncy;
+        }
+        graph.adjncy[adjIdx] = atoi(token); 
+        adjIdx++;
+        token = strtok(NULL, ";");
+    }
+    free(adjncy);
+    graph.num_edges = adjIdx;
+
+    // Process xadj data - using the specific line number passed
+    char* xadj = strdup(container->lines[num_line]);
+    if (xadj == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+    }
+    
+    token = strtok(xadj, ";");
+    int xadjId = 0;
+    while(token != NULL){
+        if(xadjId >= graph.xadj_capacity){
+            graph.xadj_capacity *= 2;
+            int* new_xadj = realloc(graph.xadj, graph.xadj_capacity * sizeof(int));
+            if (new_xadj == NULL) {
+                fprintf(stderr, "Memory reallocation failed\n");
+                free(xadj);
+                exit(1);
+            }
+            graph.xadj = new_xadj;
+        }
+        graph.xadj[xadjId] = atoi(token);
+        xadjId++;
+        token = strtok(NULL, ";");
+    }
+    free(xadj);
+
+    return graph;
+}
+
+void read_mltp_graphs(Graph* graph_list, LineContainer* container){
+    for(int i=4; i<container->num_lines; i++){
+       graph_list[i-4] = assign_values(container, i); 
+    }
 }
 
 int main(int argc, char **argv)
@@ -47,15 +174,10 @@ int main(int argc, char **argv)
     if (parse_arguments(argc, argv) != 0) {
         return 1;
     }
-    Graph* graph = malloc(sizeof(Graph));
-    
-    graph->xadj = malloc(8192);
-    graph->adjncy = malloc(8192);
 
 
     // Get parsed arguments
     struct arguments *args = get_arguments();
-    printf("input: %s",args->input);
 
     // Open input file
     FILE *input_file = fopen(args->input, "r");
@@ -64,10 +186,30 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // Process file based on parsed arguments
-    printf("Processing file: %s\n", args->input);
-    printf("Number of parts: %d\n", args->parts);
-    printf("Margin: %d%%\n", args->margin);
+    LineContainer* container = create_line_container();
+        // Read lines
+    char* line;
+    while ((line = read_line(input_file)) != NULL) {
+        if (add_line(container, line) != 0) {
+            // Handle error
+            fclose(input_file);
+            return 1;
+        }
+    }
+   
+
+
+    int num_graphs = container->num_lines - 4;
+    if (num_graphs <= 0) {
+        fprintf(stderr, "Not enough lines to process graphs\n");
+        return 1;
+    }
+    Graph* graph_list = init_graph_list(num_graphs);
+
+    read_mltp_graphs(graph_list, container);
+    for(int i=0; i<container->num_lines-4;i++){
+        printf("Num edges of %d graph: %d\n",i ,graph_list[i].num_edges);
+    }
     
     // Output file handling
     FILE *output_file = args->output ? fopen(args->output, "w") : stdout;
@@ -80,11 +222,6 @@ int main(int argc, char **argv)
     // Format handling
     printf("Output format: %s\n", args->format);
     
-    char* line;
-    line = read_line(input_file);
-    printf("%s\n", line);
-    int num = line[0] - '0';
-    printf("%d", num);
     // Close files
     fclose(input_file);
     if (output_file != stdout) {
