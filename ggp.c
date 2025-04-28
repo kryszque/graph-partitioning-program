@@ -5,6 +5,7 @@
 #include <omp.h>
 #include <time.h>
 #include "ggp.h"
+#include "processid.h"
 
 void double_capacity(BoundryList* boundry, int* partition){
     int* new_vertices = realloc(boundry->vertices, boundry->capacity * 2 * sizeof(int));

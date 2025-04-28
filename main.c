@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include "processid.h"
 #include "arg_parser.h"
 #include "ggp.h"
@@ -8,12 +9,13 @@
 
 int main(int argc, char **argv) {
     srand(time(NULL));
+      printf("test1\n");
     // Parsowanie argumentów wiersza poleceń
     if (parse_arguments(argc, argv) != 0) {
         return 1;
     }
     struct arguments* args = get_arguments();
-
+      printf("test2\n");
     // Otwarcie pliku wejściowego
     FILE* input_file = fopen(args->input, "r");
     if (input_file == NULL) {
@@ -28,27 +30,28 @@ int main(int argc, char **argv) {
         add_line(container, line);
     }
     fclose(input_file);
-    
+      printf("test3\n");
     // Utworzenie struktury GraphList
     GraphList graph_list;
+
     graph_list.num_graphs = container->num_lines - 4;
     
     if (graph_list.num_graphs <= 0) {
         fprintf(stderr, "Error: Not enough lines to process graphs\n");
         return 1;
     }
-    
+      printf("test3.5\n");
     // Inicjalizacja tablicy grafów
     graph_list.graphs = init_graph_list(graph_list.num_graphs);
     read_mltp_graphs(graph_list.graphs, container);
-    
+    printf("test4\n");
     // Wyświetlenie podstawowych informacji o grafach
     printf("Graph List contains %d graphs:\n", graph_list.num_graphs);
     for (int i = 0; i < graph_list.num_graphs; i++) {
         printf("Graph %d: %d vertices, %d edges\n", 
                i, graph_list.graphs[i].num_vertices, graph_list.graphs[i].num_edges);
     }
-    
+      printf("test5\n");
     //dane do podzialu
     double imabalance = args->margin;
     int num_parts = args->parts;
@@ -81,7 +84,7 @@ int main(int argc, char **argv) {
             //metis
         }
     }
-
+    printf("test6\n");
 
 
     // Zwolnienie zasobów

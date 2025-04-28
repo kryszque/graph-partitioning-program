@@ -6,10 +6,10 @@ FLAGS = -O2 -Wall -Wextra -std=c11
 TARGET = G_DIV
 
 # Reguły budowania
-$(TARGET): ggp.o processid.o arg_parser.o output_file.o
-	$(CC) ggp.o processid.o  arg_parser.o output_file.o -o $(TARGET) $(CFLAGS)
+$(TARGET): ggp.o processid.o arg_parser.o output_file.o main.o
+	$(CC) ggp.o processid.o arg_parser.o output_file.o main.o -o $(TARGET) $(CFLAGS)
 
-ggp.o: ggp.c ggp.h
+ggp.o: ggp.c ggp.h processid.h
 	$(CC) $(CFLAGS) -c ggp.c -o ggp.o
 
 arg_parser.o: arg_parser.c 

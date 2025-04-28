@@ -110,7 +110,3 @@ void getResult_txt(Graph* graph, LineContainer* container, int* partition, int n
     }
     fclose(result_txt);
 }
-
-int main(){
-    return 0;
-}
