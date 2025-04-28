@@ -4,9 +4,6 @@
 #include "processid.h"
 #include "arg_parser.h"
 
-static Graph* g_graph_list = NULL;  // Przechowuje listę grafów
-static int g_num_graphs = 0;        // Przechowuje liczbę grafów
-
 
 char* read_line(FILE* file) {
     int buffer_size = 1024;
@@ -61,55 +58,78 @@ int add_line(LineContainer* container, char* line){
 }
 
 Graph* init_graph_list(int count) {
-    g_graph_list = malloc(count * sizeof(Graph));
-    g_num_graphs = count;
+    printf("DEBUG: Initializing graph list with %d graphs\n", count);
+    Graph* graph_list = malloc(count * sizeof(Graph));
     
-    if (g_graph_list == NULL) {
+    if (graph_list == NULL) {
         fprintf(stderr, "Memory allocation failed for graph list\n");
         exit(1);
     }
     
     for (int i = 0; i < count; i++) {
-        g_graph_list[i].num_edges = 0;
-        g_graph_list[i].num_vertices = 0;
-        g_graph_list[i].xadj_capacity = 2048;
-        g_graph_list[i].adjncy_capacity = 2048;
-        g_graph_list[i].xadj = malloc(g_graph_list[i].xadj_capacity * sizeof(int));
-        g_graph_list[i].adjncy = malloc(g_graph_list[i].adjncy_capacity * sizeof(int));
+        printf("DEBUG: Initializing graph %d\n", i);
+        graph_list[i].num_edges = 0;
+        graph_list[i].num_vertices = 0;
+        graph_list[i].xadj_capacity = 2048;
+        graph_list[i].adjncy_capacity = 2048;
+        graph_list[i].xadj = malloc(graph_list[i].xadj_capacity * sizeof(int));
+        graph_list[i].adjncy = malloc(graph_list[i].adjncy_capacity * sizeof(int));
         
-        if (g_graph_list[i].xadj == NULL || g_graph_list[i].adjncy == NULL) {
+        if (graph_list[i].xadj == NULL || graph_list[i].adjncy == NULL) {
             fprintf(stderr, "Memory allocation failed for graph arrays\n");
             exit(1);
         }
     }
     
-    return g_graph_list;
+    printf("DEBUG: Graph list initialization complete\n");
+    return graph_list;
 }
 
 
-Graph assign_values(LineContainer* container, int num_line) {
-    Graph graph;
-    graph.num_vertices = 0;
-    graph.num_edges = 0;
-    graph.xadj_capacity = 2048;
-    graph.adjncy_capacity = 2048;
-    graph.xadj = malloc(graph.xadj_capacity * sizeof(int));
-    graph.adjncy = malloc(graph.adjncy_capacity * sizeof(int));
+void assign_values(LineContainer* container, GraphList* graph_list, int line_index, int graph_index) {
+    printf("DEBUG: Assigning values for graph %d using line %d\n", graph_index, line_index);
     
-    if (graph.xadj == NULL || graph.adjncy == NULL) {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
+    // Validate inputs
+    if (graph_index < 0 || graph_index >= graph_list->num_graphs) {
+        fprintf(stderr, "ERROR: Invalid graph index %d (max: %d)\n", graph_index, graph_list->num_graphs - 1);
+        return;
     }
     
-    // Count vertices from line 1
+    if (line_index < 0 || line_index >= container->num_lines) {
+        fprintf(stderr, "ERROR: Invalid line index %d (max: %d)\n", line_index, container->num_lines - 1);
+        return;
+    }
+    
+    // Get the current graph
+    Graph* current_graph = &(graph_list->graphs[graph_index]);
+    printf("DEBUG: Got graph pointer at index %d\n", graph_index);
+    
+    // Make sure we're working with a valid line for vertex count
+    if (1 >= container->num_lines) {
+        fprintf(stderr, "ERROR: Container doesn't have enough lines for vertex info (line 1)\n");
+        return;
+    }
+    
+    // Count vertices from line 1 (should be the same for all graphs)
     char* line = container->lines[1];
-    graph.num_vertices++;
-    for(int i=0; line[i] != '\0'; i++){
-        if(line[i] == ';') graph.num_vertices++;
+    printf("DEBUG: Counting vertices from line: %s\n", line);
+    
+    current_graph->num_vertices = 1; // Start with 1 vertex
+    for(int i = 0; line[i] != '\0'; i++) {
+        if(line[i] == ';') current_graph->num_vertices++;
+    }
+    printf("DEBUG: Counted %d vertices\n", current_graph->num_vertices);
+    
+    // Make sure we're working with a valid line for adjacency
+    if (3 >= container->num_lines) {
+        printf("ERROR: Container doesn't have enough lines for adjacency info (line 3)\n");
+        return;
     }
     
-    // Process adjncy data
+    // Process adjncy data from line 3 (should be the same for all graphs)
+    printf("Przed strdup");
     char* adjncy = strdup(container->lines[3]);
+    printf("Po strdup");
     if (adjncy == NULL) {
         fprintf(stderr, "Memory allocation failed\n");
         exit(1);
@@ -118,26 +138,28 @@ Graph assign_values(LineContainer* container, int num_line) {
     char* token = strtok(adjncy, ";");
     int adjIdx = 0;
 
-    while(token != NULL){
-        if (adjIdx >= graph.adjncy_capacity) {
-            graph.adjncy_capacity *= 2;
-            int* new_adjncy = realloc(graph.adjncy, graph.adjncy_capacity * sizeof(int));
+    while(token != NULL) {
+        if (adjIdx >= current_graph->adjncy_capacity) {
+            current_graph->adjncy_capacity *= 2;
+            int* new_adjncy = realloc(current_graph->adjncy, current_graph->adjncy_capacity * sizeof(int));
             if (new_adjncy == NULL) {
                 fprintf(stderr, "Memory reallocation failed\n");
                 free(adjncy);
                 exit(1);
             }
-            graph.adjncy = new_adjncy;
+            current_graph->adjncy = new_adjncy;
         }
-        graph.adjncy[adjIdx] = atoi(token); 
+        current_graph->adjncy[adjIdx] = atoi(token); 
         adjIdx++;
         token = strtok(NULL, ";");
     }
     free(adjncy);
-    graph.num_edges = adjIdx;
+    current_graph->num_edges = adjIdx;
+    printf("DEBUG: Processed %d edges\n", current_graph->num_edges);
 
-    // Process xadj data - using the specific line number passed
-    char* xadj = strdup(container->lines[num_line]);
+    // Process xadj data from the specified line
+    printf("DEBUG: Processing xadj data from line: %s\n", container->lines[line_index]);
+    char* xadj = strdup(container->lines[line_index]);
     if (xadj == NULL) {
         fprintf(stderr, "Memory allocation failed\n");
         exit(1);
@@ -145,29 +167,28 @@ Graph assign_values(LineContainer* container, int num_line) {
     
     token = strtok(xadj, ";");
     int xadjId = 0;
-    while(token != NULL){
-        if(xadjId >= graph.xadj_capacity){
-            graph.xadj_capacity *= 2;
-            int* new_xadj = realloc(graph.xadj, graph.xadj_capacity * sizeof(int));
+    while(token != NULL) {
+        if(xadjId >= current_graph->xadj_capacity) {
+            current_graph->xadj_capacity *= 2;
+            int* new_xadj = realloc(current_graph->xadj, current_graph->xadj_capacity * sizeof(int));
             if (new_xadj == NULL) {
                 fprintf(stderr, "Memory reallocation failed\n");
                 free(xadj);
                 exit(1);
             }
-            graph.xadj = new_xadj;
+            current_graph->xadj = new_xadj;
         }
-        graph.xadj[xadjId] = atoi(token);
+        current_graph->xadj[xadjId] = atoi(token);
         xadjId++;
         token = strtok(NULL, ";");
     }
     free(xadj);
-
-    return graph;
+    printf("DEBUG: Processed %d xadj values for graph %d\n", xadjId, graph_index);
 }
 
-void read_mltp_graphs(Graph* graph_list, LineContainer* container){
-    for(int i=4; i<container->num_lines; i++){
-       graph_list[i-4] = assign_values(container, i); 
+void read_mltp_graphs(GraphList* graph_list, LineContainer* container) {
+    for(int i=0; i<graph_list->num_graphs; i++) {
+        assign_values(container, graph_list, i+4, i); // Pass both the line index and graph index
     }
 }
 

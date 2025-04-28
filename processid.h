@@ -27,8 +27,8 @@ char* read_line(FILE* file);
 LineContainer* create_line_container();
 int add_line(LineContainer* container, char* line);
 Graph* init_graph_list(int count);
-Graph assign_values(LineContainer* container, int num_line);
-void read_mltp_graphs(Graph* graph_list, LineContainer* container);
+void assign_values(LineContainer* container, GraphList* graph_list, int line_index, int graph_index);
+void read_mltp_graphs(GraphList* graph_list, LineContainer* container);
 
 
 
