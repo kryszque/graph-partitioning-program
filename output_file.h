@@ -11,8 +11,10 @@ typedef struct{
     int* indecies;
 } Line;
 
-void doubleSize(Line l);
-void doubleIndecies(Line l);
+// Changed function signatures to use pointers
+void doubleSize(Line* l);
+void doubleIndecies(Line* l);
 void getResult_txt(Graph* graph, LineContainer* container, int* partition, int num_parts, char* output_file);
+void writeResultBinary(Graph* graph, LineContainer* container, int* partition, int num_parts, char* output_file);
 
 #endif

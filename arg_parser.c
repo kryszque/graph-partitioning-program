@@ -36,10 +36,10 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
       arguments->input = arg;
       break;
     case 'p':
-      arguments->parts= atof(arg)/100;
+      arguments->parts= atoi(arg);
       break;
     case 'm':
-      arguments->margin = atoi(arg);
+      arguments->margin = atof(arg)/100;
       break;
     case 'o':
       arguments->output = arg;

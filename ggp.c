@@ -8,23 +8,31 @@
 #include "processid.h"
 
 void double_capacity(BoundryList* boundry, int* partition){
-    int* new_vertices = realloc(boundry->vertices, boundry->capacity * 2 * sizeof(int));
+    // Check for integer overflow
+    if (boundry->capacity > INT_MAX / 2) {
+        fprintf(stderr, "CAPACITY TOO LARGE FOR DOUBLING\n");
+        return; // Handle gracefully instead of exit
+    }
+
+    size_t new_capacity = boundry->capacity * 2;
+    int* new_vertices = realloc(boundry->vertices, new_capacity * sizeof(int));
+
     if (!new_vertices) {
         fprintf(stderr, "REALOKACJA BOUNDRY NIEUDANA!\n");
-        free(boundry->vertices);
-        free(partition);
-        exit(EXIT_FAILURE);
+        return; // Handle gracefully instead of exit
     }
+
     boundry->vertices = new_vertices;
-    boundry->capacity = boundry->capacity * 2;
+    boundry->capacity = new_capacity;
 }
 
 void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part){
+    memset(partition, 0, graph->num_vertices * sizeof(int));
     #pragma omp parallel
     {
         //kazdy watek ma lokalne buffory
         int local_capacity = 128;
-        int* local_vertices = (int*)malloc(local_capacity * sizeof(int));
+        int* local_vertices = (int*)calloc(local_capacity, sizeof(int));
         int local_size = 0;
 
         #pragma omp for nowait
@@ -59,64 +67,112 @@ void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int curr
                 boundry->vertices[boundry->size++] = local_vertices[k];
             }
         }
+        free(local_vertices);
     }
 }
 
-void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part, int removed_vertex){
+void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int removed_vertex){
+    // First verify if the vertex is valid
+    if (removed_vertex < 0 || removed_vertex >= graph->num_vertices) {
+        return;
+    }
+    
     int removed_vertex_index = -1;
-    for(int j = 0; j < boundry->size; j++){ //znajdywany jest index usunietego wierzcholka w strukturze boundry
-        if(boundry->vertices[j] == removed_vertex){
+    
+    // Find the vertex in the boundary list with bounds checking
+    for(int j = 0; j < boundry->size; j++) {
+        if (j >= boundry->capacity) break; // Safety check
+        
+        if(boundry->vertices[j] == removed_vertex) {
             removed_vertex_index = j;
             break;
         }
     }
+    
     if (removed_vertex_index == -1) {
-        printf("WIERZCHOLEK %d NIE ZNALEZIONY W BOUNDRY LIST\n", removed_vertex);
+        // Vertex not in boundary, silently return
         return;
     }
-    //sledzony jest stan znalezionego wierzcholka do zastapienia usunietego w boundry
+    
     int replacement_found = 0;
-    //sprawdzanie wszystkich sasiadow usunietego wierzcholka w partycji 0
-    for (int i = graph->xadj[removed_vertex]; i < graph->xadj[removed_vertex + 1]; i++) {
+    
+    // Ensure proper bounds checking for xadj access
+    if (removed_vertex + 1 >= graph->num_vertices) return;
+    
+    int start_idx = graph->xadj[removed_vertex];
+    int end_idx = graph->xadj[removed_vertex + 1];
+    
+    // Validate indices
+    if (start_idx < 0 || end_idx > graph->xadj[graph->num_vertices] || start_idx > end_idx) {
+        return;
+    }
+    
+    for (int i = start_idx; i < end_idx; i++) {
+        // Additional bounds check
+        if (i < 0 || i >= graph->xadj[graph->num_vertices]) continue;
+        
         int neighbour = graph->adjncy[i];
+        
+        // Validate neighbor index
+        if (neighbour < 0 || neighbour >= graph->num_vertices) continue;
+        
         if (partition[neighbour] == 0) {
-            //sprawdzanie czy dany sasiad juz nie jest w granicy
+            // Check if already in boundary with safer bounds checking
             int already_in_boundary = 0;
             for (int k = 0; k < boundry->size; k++) {
+                if (k >= boundry->capacity) break; // Safety check
+                
                 if (boundry->vertices[k] == neighbour) {
                     already_in_boundary = 1;
                     break;
                 }
             }
+            
             if (!already_in_boundary) {
                 if (!replacement_found) {
-                    //pierwszy znaleziony wierzcholek zastepuje usuniety w liscie
-                    boundry->vertices[removed_vertex_index] = neighbour;
-                    replacement_found = 1;
+                    // Replace at the found index, with bounds check
+                    if (removed_vertex_index < boundry->capacity) {
+                        boundry->vertices[removed_vertex_index] = neighbour;
+                        replacement_found = 1;
+                    }
                 } else {
-                    //nastepne dodane sa na koncu listy
-                    if (boundry->size == boundry->capacity)
+                    // Add to the end, with proper capacity management
+                    if (boundry->size >= boundry->capacity) {
                         double_capacity(boundry, partition);
-                    boundry->vertices[boundry->size++] = neighbour;
+                    }
+                    
+                    // Final safety check before writing
+                    if (boundry->size < boundry->capacity) {
+                        boundry->vertices[boundry->size++] = neighbour;
+                    }
                 }
             }
         }
     }
-    //jesli nie znaleziono sasiadow usuwany jest tylko usuniety wierzcholek
+    
+    // Handle removal when no replacement was found
     if (!replacement_found) {
+        // Safe removal with bounds checking
         for (int k = removed_vertex_index; k < boundry->size - 1; k++) {
+            if (k >= boundry->capacity || k+1 >= boundry->capacity) break;
             boundry->vertices[k] = boundry->vertices[k + 1];
         }
-        boundry->size--;
+        
+        if (boundry->size > 0) {
+            boundry->size--;
+        }
     }
 }
 
 int calculate_cut_increase(Graph* graph, int* partition, int v, int current_part){
+    if (v < 0 || v + 1 >= graph->num_vertices)
+        return 0;
     int cut_increase = 0;
     //dla danego wierzcholka (kandydata do dodania do aktualnej partycji) sprawdzane są partycje jego sąsiadów 
     //i liczona ilość przeciętych krawędzi w momencie przeniesienia wierzchołka
     for(int i = graph->xadj[v]; i < graph->xadj[v+1]; i++){
         int neighbour = graph->adjncy[i];
+        if (neighbour < 0 || neighbour >= graph->num_vertices) continue;
         if(partition[neighbour] == current_part){
             cut_increase --;
         }
@@ -137,12 +193,9 @@ int find_best_vertex(Graph* graph, BoundryList* boundry, int* partition, int cur
     int best_vertex = -1;
     int min_cut_increase = INT_MAX;
 
-    #pragma omp parallel
-    {
         int local_best_vertex = -1;
         int local_min_cut_increase = INT_MAX;
         unsigned int seed = (unsigned int)(time(NULL) ^ omp_get_thread_num());
-        #pragma omp for nowait
         for (int i = 0; i < boundry->size; i++) {
             int v = boundry->vertices[i];
             int cut_increase = calculate_cut_increase(graph, partition, v, current_part);
@@ -154,15 +207,14 @@ int find_best_vertex(Graph* graph, BoundryList* boundry, int* partition, int cur
             }
         }
         //redukcja lokalnych wynikow do globalnych
-        #pragma omp critical
-        {
+
+        
             if (local_min_cut_increase < min_cut_increase ||
                 (local_min_cut_increase == min_cut_increase && (simple_rand(&seed) % 2 == 0))) {
                 min_cut_increase = local_min_cut_increase;
                 best_vertex = local_best_vertex;
             }
-        }
-    }
+
     return best_vertex;
 }
 
@@ -180,13 +232,30 @@ int count_edge_cuts(Graph* graph, int* partition){
     return cuts/2;
 }
 
-// For the refinement phase, calculate cut change when moving v from from_part to to_part
 int calculate_cut_change(Graph* graph, int* partition, int v, int from_part, int to_part) {
+    // Proper bounds checking
+    if (v < 0 || v >= graph->num_vertices || v + 1 >= graph->num_vertices)
+        return 0;
+
     int cut_change = 0;
-    
-    for (int i = graph->xadj[v]; i < graph->xadj[v+1]; i++) {
+
+    // Verify array bounds explicitly before accessing
+    int start_idx = graph->xadj[v];
+    int end_idx = graph->xadj[v+1];
+
+    // Validate index range
+    if (start_idx < 0 || end_idx > graph->xadj[graph->num_vertices] || start_idx > end_idx) {
+        return 0; // Invalid range, return safely
+    }
+
+    for (int i = start_idx; i < end_idx; i++) {
+        // Additional bounds check on adjacency list
+        if (i < 0 || i >= graph->xadj[graph->num_vertices]) continue;
+
         int neighbor = graph->adjncy[i];
-        
+        // Validate neighbor index
+        if (neighbor < 0 || neighbor >= graph->num_vertices) continue;
+
         if (partition[neighbor] == from_part) {
             // Was not a cut, will become a cut
             cut_change++;
@@ -195,10 +264,9 @@ int calculate_cut_change(Graph* graph, int* partition, int v, int from_part, int
             // Was a cut, will no longer be a cut
             cut_change--;
         }
-        // No change for neighbors in other partitions
     }
-    
-    return cut_change; // Positive means more cuts, negative means fewer cuts
+
+    return cut_change;
 }
 
 int compare_vertex_moves(const void* a, const void* b) {
@@ -214,11 +282,24 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
     int min_part_size = (int)(vertices_per_part * (1.0 - imbalance));
     if (min_part_size < 1) min_part_size = 1;
     
-    // Calculate current partition sizes
-    int part_sizes[num_parts];
+    // Calculate current partition sizes - Using dynamically allocated array
+    int* part_sizes = (int*)malloc(num_parts * sizeof(int));
+    if (!part_sizes) {
+        fprintf(stderr, "Memory allocation failed for part_sizes\n");
+        return;
+    }
     memset(part_sizes, 0, sizeof(int) * num_parts);
+    
     for (int i = 0; i < graph->num_vertices; i++) {
-        part_sizes[partition[i]]++;
+        // Validate partition index before accessing
+        if (partition[i] >= 0 && partition[i] < num_parts) {
+            part_sizes[partition[i]]++;
+        } else {
+            // Fix invalid partitions instead of failing
+            partition[i] = 0; // Reset to default partition
+            part_sizes[0]++;
+            fprintf(stderr, "Fixed invalid partition index: %d for vertex %d\n", partition[i], i);
+        }
     }
 
     // Determine maximum moves per iteration (more flexible based on imbalance)
@@ -241,29 +322,80 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                 if (move_array_size > graph->num_vertices) 
                     move_array_size = graph->num_vertices;
                 
-                VertexMove moves[move_array_size];
+                // Dynamically allocate move arrays to prevent stack overflow
+                VertexMove* moves = (VertexMove*)malloc(move_array_size * sizeof(VertexMove));
+                if (!moves) {
+                    fprintf(stderr, "Memory allocation failed for moves array\n");
+                    free(part_sizes);
+                    return;
+                }
+                
                 int move_count = 0;
                 
                 #pragma omp parallel
                 {
-                    // Thread-local arrays for collecting moves
-                    VertexMove private_moves[move_array_size];
+                    // Thread-local arrays for collecting moves - dynamically allocated
+                    VertexMove* private_moves = NULL;
+                    int* neighbor_parts = NULL;
+                    
+                    // Proper allocation with error handling
+                    private_moves = (VertexMove*)malloc(move_array_size * sizeof(VertexMove));
+                    if (!private_moves) {
+                        fprintf(stderr, "Thread memory allocation failed\n");
+                    } else {
+                        // Initialize to prevent uninitialized values
+                        memset(private_moves, 0, move_array_size * sizeof(VertexMove));
+                        
+                        // Allocate thread-local neighbor_parts array
+                        neighbor_parts = (int*)malloc(num_parts * sizeof(int));
+                        if (!neighbor_parts) {
+                            fprintf(stderr, "Thread memory allocation failed for neighbor_parts\n");
+                            free(private_moves);
+                            private_moves = NULL;
+                        } else {
+                            memset(neighbor_parts, 0, num_parts * sizeof(int));
+                        }
+                    }
+                    
                     int private_move_count = 0;
                     
                     #pragma omp for nowait
                     for (int v = 0; v < graph->num_vertices; v++) {
+                        // Skip if thread failed to allocate memory
+                        if (!private_moves || !neighbor_parts) continue;
+                        
                         if (partition[v] != p) continue;
                         
                         int best_dest = -1;
                         int best_cut_change = INT_MAX;
                         
-                        // Create a map of neighboring partitions for this vertex
-                        int neighbor_parts[num_parts];
+                        // Reset the map of neighboring partitions for this vertex
                         memset(neighbor_parts, 0, sizeof(int) * num_parts);
                         
-                        for (int j = graph->xadj[v]; j < graph->xadj[v+1]; j++) {
-                            int neighbor = graph->adjncy[j];
-                            neighbor_parts[partition[neighbor]]++;
+                        // Verify array bounds before accessing
+                        if (v+1 < graph->num_vertices) {
+                            int start_idx = graph->xadj[v];
+                            int end_idx = graph->xadj[v+1];
+                            
+                            // Validate index range
+                            if (start_idx < 0 || end_idx > graph->xadj[graph->num_vertices] || start_idx > end_idx) {
+                                continue; // Skip this vertex if indices are invalid
+                            }
+                            
+                            for (int j = start_idx; j < end_idx; j++) {
+                                // Ensure we're accessing valid adjacency data
+                                if (j < 0 || j >= graph->xadj[graph->num_vertices]) continue;
+                                
+                                int neighbor = graph->adjncy[j];
+                                // Ensure we have a valid neighbor index
+                                if (neighbor < 0 || neighbor >= graph->num_vertices) continue;
+                                
+                                // Ensure valid partition index
+                                int neighbor_part = partition[neighbor];
+                                if (neighbor_part >= 0 && neighbor_part < num_parts) {
+                                    neighbor_parts[neighbor_part]++;
+                                }
+                            }
                         }
                         
                         // Find best destination partition
@@ -276,7 +408,8 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                             
                             // Prioritize moves to partitions where the vertex has more neighbors
                             if (cut_change < best_cut_change || 
-                                (cut_change == best_cut_change && neighbor_parts[d] > neighbor_parts[best_dest])) {
+                                (cut_change == best_cut_change && best_dest != -1 && 
+                                 neighbor_parts[d] > neighbor_parts[best_dest])) {
                                 best_cut_change = cut_change;
                                 best_dest = d;
                             }
@@ -287,12 +420,19 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                         }
                     }
                     
+                    // Critical section to merge thread-local results
                     #pragma omp critical
                     {
-                        for (int i = 0; i < private_move_count && move_count < move_array_size; i++) {
-                            moves[move_count++] = private_moves[i];
+                        if (private_moves) { // Only if memory allocation succeeded
+                            for (int i = 0; i < private_move_count && move_count < move_array_size; i++) {
+                                moves[move_count++] = private_moves[i];
+                            }
                         }
                     }
+                    
+                    // Free thread-local resources
+                    if (neighbor_parts) free(neighbor_parts);
+                    if (private_moves) free(private_moves);
                 }
                 
                 if (move_count > 0) {
@@ -308,14 +448,20 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                         // Ensure destination partition won't exceed max size
                         if (part_sizes[dest] >= max_part_size) continue;
                         
-                        partition[v] = dest;
-                        part_sizes[p]--;
-                        part_sizes[dest]++;
-                        moves_made_total++;
+                        // Verify vertex index
+                        if (v >= 0 && v < graph->num_vertices) {
+                            partition[v] = dest;
+                            part_sizes[p]--;
+                            part_sizes[dest]++;
+                            moves_made_total++;
+                        }
                         
                         if (part_sizes[p] <= max_part_size) break;
                     }
                 }
+                
+                // Free dynamically allocated moves array
+                free(moves);
                 
                 // Break if this partition is now within bounds
                 if (part_sizes[p] <= max_part_size) break;
@@ -335,8 +481,14 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
         global_improvement = 0;
         
         // First, identify underloaded partitions that could accept more vertices
-        int can_grow[num_parts];
+        int* can_grow = (int*)malloc(num_parts * sizeof(int));
+        if (!can_grow) {
+            fprintf(stderr, "Memory allocation failed for can_grow\n");
+            free(part_sizes);
+            return;
+        }
         memset(can_grow, 0, sizeof(int) * num_parts);
+        
         for (int p = 0; p < num_parts; p++) {
             can_grow[p] = (part_sizes[p] < max_part_size);
         }
@@ -351,43 +503,94 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
             if (max_potential_moves > graph->num_vertices / num_parts)
                 max_potential_moves = graph->num_vertices / num_parts;
             
-            VertexMove moves[max_potential_moves];
+            if (max_potential_moves <= 0) continue; // Skip if no moves possible
+            
+            // Dynamically allocate move arrays
+            VertexMove* moves = (VertexMove*)malloc(max_potential_moves * sizeof(VertexMove));
+            if (!moves) {
+                fprintf(stderr, "Memory allocation failed for moves array in phase 2\n");
+                free(can_grow);
+                free(part_sizes);
+                return;
+            }
+            
             int move_count = 0;
             
             #pragma omp parallel
             {
-                VertexMove private_moves[max_potential_moves];
+                // Thread-local arrays - dynamically allocated
+                VertexMove* private_moves = NULL;
+                int* connections = NULL;
+                
+                private_moves = (VertexMove*)malloc(max_potential_moves * sizeof(VertexMove));
+                if (!private_moves) {
+                    fprintf(stderr, "Thread memory allocation failed in phase 2\n");
+                } else {
+                    // Zero initialize
+                    memset(private_moves, 0, max_potential_moves * sizeof(VertexMove));
+                    
+                    connections = (int*)malloc(num_parts * sizeof(int));
+                    if (!connections) {
+                        fprintf(stderr, "Thread memory allocation failed for connections\n");
+                        free(private_moves);
+                        private_moves = NULL;
+                    } else {
+                        memset(connections, 0, num_parts * sizeof(int));
+                    }
+                }
+                
                 int private_move_count = 0;
                 
                 #pragma omp for nowait
                 for (int v = 0; v < graph->num_vertices; v++) {
+                    // Skip if memory allocation failed
+                    if (!private_moves || !connections) continue;
+                    
                     if (partition[v] != src_part) continue;
                     
                     int best_dest = -1;
                     int best_cut_change = 0; // Only consider moves that improve cuts
                     
-                    // Track connectivity to each partition
-                    int connections[num_parts];
+                    // Reset connections array
                     memset(connections, 0, sizeof(int) * num_parts);
                     
-                    // Count connections to each partition
-                    for (int j = graph->xadj[v]; j < graph->xadj[v+1]; j++) {
-                        int neighbor = graph->adjncy[j];
-                        connections[partition[neighbor]]++;
-                    }
-                    
-                    // Consider all possible destination partitions
-                    for (int dest_part = 0; dest_part < num_parts; dest_part++) {
-                        if (dest_part == src_part) continue;
-                        if (!can_grow[dest_part]) continue;
+                    // Bounds check before accessing xadj
+                    if (v+1 < graph->num_vertices) {
+                        int start_idx = graph->xadj[v];
+                        int end_idx = graph->xadj[v+1];
                         
-                        // Calculate gain when moving v from src_part to dest_part
-                        int cut_change = connections[dest_part] - (connections[src_part] + 
-                                        (graph->xadj[v+1] - graph->xadj[v]) - connections[dest_part] - connections[src_part]);
+                        // Validate index range
+                        if (start_idx < 0 || end_idx > graph->xadj[graph->num_vertices] || start_idx > end_idx) {
+                            continue; // Skip this vertex if indices are invalid
+                        }
                         
-                        if (cut_change < best_cut_change) {
-                            best_cut_change = cut_change;
-                            best_dest = dest_part;
+                        // Count connections to each partition
+                        for (int j = start_idx; j < end_idx; j++) {
+                            // Verify adjacency index
+                            if (j < 0 || j >= graph->xadj[graph->num_vertices]) continue;
+                            
+                            int neighbor = graph->adjncy[j];
+                            // Verify neighbor index
+                            if (neighbor < 0 || neighbor >= graph->num_vertices) continue;
+                            
+                            int neighbor_part = partition[neighbor];
+                            if (neighbor_part >= 0 && neighbor_part < num_parts) {
+                                connections[neighbor_part]++;
+                            }
+                        }
+                        
+                        // Consider all possible destination partitions
+                        for (int dest_part = 0; dest_part < num_parts; dest_part++) {
+                            if (dest_part == src_part) continue;
+                            if (!can_grow[dest_part]) continue;
+                            
+                            // Calculate gain when moving v from src_part to dest_part
+                            int cut_change = calculate_cut_change(graph, partition, v, src_part, dest_part);
+                            
+                            if (cut_change < best_cut_change) {
+                                best_cut_change = cut_change;
+                                best_dest = dest_part;
+                            }
                         }
                     }
                     
@@ -398,10 +601,16 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                 
                 #pragma omp critical
                 {
-                    for (int i = 0; i < private_move_count && move_count < max_potential_moves; i++) {
-                        moves[move_count++] = private_moves[i];
+                    if (private_moves) { // Only if allocation succeeded
+                        for (int i = 0; i < private_move_count && move_count < max_potential_moves; i++) {
+                            moves[move_count++] = private_moves[i];
+                        }
                     }
                 }
+                
+                // Free thread-local resources
+                if (connections) free(connections);
+                if (private_moves) free(private_moves);
             }
             
             if (move_count > 0) {
@@ -423,19 +632,28 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                     if (part_sizes[src_part] <= min_part_size) break;
                     if (part_sizes[dest] >= max_part_size) continue;
                     
-                    // Apply the move
-                    partition[v] = dest;
-                    part_sizes[src_part]--;
-                    part_sizes[dest]++;
-                    global_improvement = 1;
-                    
-                    // Update can_grow status if destination becomes full
-                    if (part_sizes[dest] >= max_part_size) {
-                        can_grow[dest] = 0;
+                    // Verify vertex index
+                    if (v >= 0 && v < graph->num_vertices) {
+                        // Apply the move
+                        partition[v] = dest;
+                        part_sizes[src_part]--;
+                        part_sizes[dest]++;
+                        global_improvement = 1;
+                        
+                        // Update can_grow status if destination becomes full
+                        if (part_sizes[dest] >= max_part_size) {
+                            can_grow[dest] = 0;
+                        }
                     }
                 }
             }
+            
+            // Free moves array
+            free(moves);
         }
+        
+        // Free can_grow array
+        free(can_grow);
     }
     
     // Phase 3: Final balancing pass
@@ -459,16 +677,35 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
         // Try to move vertices from largest to smallest partition
         if (part_sizes[max_idx] > vertices_per_part && part_sizes[min_idx] < vertices_per_part) {
             int max_move_candidates = part_sizes[max_idx] - vertices_per_part;
-            VertexMove moves[max_move_candidates];
+            if (max_move_candidates <= 0) continue;
+            
+            // Dynamically allocate moves array
+            VertexMove* moves = (VertexMove*)malloc(max_move_candidates * sizeof(VertexMove));
+            if (!moves) {
+                fprintf(stderr, "Memory allocation failed for moves array in phase 3\n");
+                free(part_sizes);
+                return;
+            }
+            
             int move_count = 0;
             
             #pragma omp parallel
             {
-                VertexMove private_moves[max_move_candidates];
+                VertexMove* private_moves = NULL;
+                
+                private_moves = (VertexMove*)malloc(max_move_candidates * sizeof(VertexMove));
+                if (!private_moves) {
+                    fprintf(stderr, "Thread memory allocation failed in phase 3\n");
+                } else {
+                    memset(private_moves, 0, max_move_candidates * sizeof(VertexMove));
+                }
+                
                 int private_move_count = 0;
                 
                 #pragma omp for nowait
                 for (int v = 0; v < graph->num_vertices; v++) {
+                    if (!private_moves) continue; // Skip if allocation failed
+                    
                     if (partition[v] != max_idx) continue;
                     
                     int cut_change = calculate_cut_change(graph, partition, v, max_idx, min_idx);
@@ -480,10 +717,15 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                 
                 #pragma omp critical
                 {
-                    for (int i = 0; i < private_move_count && move_count < max_move_candidates; i++) {
-                        moves[move_count++] = private_moves[i];
+                    if (private_moves) { // Only if allocation succeeded
+                        for (int i = 0; i < private_move_count && move_count < max_move_candidates; i++) {
+                            moves[move_count++] = private_moves[i];
+                        }
                     }
                 }
+                
+                // Free thread-local resources
+                if (private_moves) free(private_moves);
             }
             
             if (move_count > 0) {
@@ -498,13 +740,22 @@ void refine_partitions(Graph* graph, int* partition, int num_parts, float imbala
                 
                 for (int i = 0; i < moves_needed; i++) {
                     int v = moves[i].vertex;
-                    partition[v] = min_idx;
-                    part_sizes[max_idx]--;
-                    part_sizes[min_idx]++;
+                    // Verify vertex index
+                    if (v >= 0 && v < graph->num_vertices) {
+                        partition[v] = min_idx;
+                        part_sizes[max_idx]--;
+                        part_sizes[min_idx]++;
+                    }
                 }
             }
+            
+            // Free moves array
+            free(moves);
         }
     }
+    
+    // Free dynamically allocated part_sizes array
+    free(part_sizes);
 }
 
 int* greedy_partition(Graph* graph, float imbalance, int num_parts){
@@ -569,7 +820,7 @@ int* greedy_partition(Graph* graph, float imbalance, int num_parts){
             //dodanie wierzcholka przecinajacego najmniej krawedzi do danej partycji
             partition[best_vertex] = part;
             current_size++;
-            update_boundry(graph, partition, &boundry, part, best_vertex);
+            update_boundry(graph, partition, &boundry, best_vertex);
         }
         free(boundry.vertices);
     }
@@ -578,45 +829,60 @@ int* greedy_partition(Graph* graph, float imbalance, int num_parts){
 }
 
 int multi_start_greedy_partition(Graph* graph, int* best_partition, float imbalance, int num_parts, int num_tries){
-    int* current_partition = NULL;
     int best_cuts = INT_MAX;
 
     #pragma omp parallel
     {
+        // Proper initialization of thread-local data
         int* local_partition = NULL;
         int local_best_cuts = INT_MAX;
+        
+        // Ensure this allocation happens and is initialized
         int* local_best_partition = (int*)malloc(graph->num_vertices * sizeof(int));
+        if (local_best_partition) {
+            // Zero-initialize to prevent uninitialized value issues
+            memset(local_best_partition, 0, graph->num_vertices * sizeof(int));
+            
+            #pragma omp for nowait
+            for(int try = 0; try < num_tries; try++) {
+                // Clean up previous iteration's allocation
+                if(local_partition != NULL) {
+                    free(local_partition);
+                    local_partition = NULL;
+                }
+                
+                local_partition = greedy_partition(graph, imbalance, num_parts);
 
-        #pragma omp for nowait
-        for(int try = 0; try < num_tries; try++){
-            if(local_partition != NULL){
-                free(local_partition);
-            }
-            local_partition = greedy_partition(graph, imbalance, num_parts);
+                if(local_partition == NULL) {
+                    fprintf(stderr, "CURRENT_PARTITION - NULL!\n");
+                    continue; // Skip this iteration rather than exiting
+                }
 
-            if(!local_partition){
-                fprintf(stderr, "CURRENT_PARTITION - NULL!\n");
-                exit(EXIT_FAILURE);
+                int cuts = count_edge_cuts(graph, local_partition);
+                if(cuts < local_best_cuts) {
+                    local_best_cuts = cuts;
+                    memcpy(local_best_partition, local_partition, graph->num_vertices*sizeof(int));
+                }
             }
-
-            int cuts = count_edge_cuts(graph, local_partition);
-            if(cuts < local_best_cuts){
-                local_best_cuts = cuts;
-                memcpy(local_best_partition, local_partition, graph->num_vertices*sizeof(int));
+            
+            // Synchronized update of global best partition
+            #pragma omp critical
+            {
+                if (local_best_cuts < best_cuts) {
+                    best_cuts = local_best_cuts;
+                    memcpy(best_partition, local_best_partition, graph->num_vertices * sizeof(int));
+                }
             }
+            
+            // Clean up all thread-local allocations
+            free(local_best_partition);
         }
-        // Zapisanie najlepszej wersji do globalnej zmiennej
-        #pragma omp critical
-        {
-            if (local_best_cuts < best_cuts) {
-                best_cuts = local_best_cuts;
-                memcpy(best_partition, local_best_partition, graph->num_vertices * sizeof(int));
-            }
+        
+        if (local_partition != NULL) {
+            free(local_partition);
         }
-
-        free(local_partition);
-        free(local_best_partition);
     }
+    
     return best_cuts;
 }
 
