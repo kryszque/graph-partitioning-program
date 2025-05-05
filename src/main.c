@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <time.h>
 #include "processid.h"
-#include "arg_parser.h"
 #include "ggp.h"
 #include "output_file.h"
 
@@ -10,14 +9,14 @@
 int main(int argc, char **argv) {
     srand(time(NULL));
     // Parsowanie argumentów wiersza poleceń
-    if (parse_arguments(argc, argv) != 0) {
+    /*if (parse_arguments(argc, argv) != 0) {
         return 1;
     }
-    struct arguments* args = get_arguments();
+    struct arguments* args = get_arguments();*/
     // Otwarcie pliku wejściowego
-    FILE* input_file = fopen(args->input, "r");
+    FILE* input_file = fopen(argv[1], "r");
     if (input_file == NULL) {
-        fprintf(stderr, "Error: Could not open input file %s\n", args->input);
+        fprintf(stderr, "Error: Could not open input file %s\n", argv[1]);
         return 1;
     }
 
@@ -80,16 +79,16 @@ int main(int argc, char **argv) {
 
 
     // Dane do podziału
-    double imabalance = args->margin;
-    int num_parts = args->parts;
+    double imabalance = atof(argv[2])/100.0;
+    int num_parts = atoi(argv[3]);
 
     int num_tries = 10;
-    char decision = args->format[0];
-    char* output_file = args->output;
+    char decision = argv[4][0];
+    char* output_file = argv[5];
 
     //podzial grafów
     for(int graph = 0; graph < graph_list->num_graphs; graph++){
-        if(graph_list->graphs[graph].num_vertices < 10000){
+        if(graph_list->graphs[graph].num_vertices < 10000000){
             int* best_partition = (int*)calloc(graph_list->graphs[graph].num_vertices, sizeof(int));
             int best_cuts = multi_start_greedy_partition(&graph_list->graphs[graph], best_partition, imabalance,
             num_parts, num_tries);

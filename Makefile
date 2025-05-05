@@ -3,25 +3,44 @@ CFLAGS = -O2 -Wall -Wextra -std=c11 -fopenmp
 FLAGS = -O2 -Wall -Wextra -std=c11
 
 # Nazwa programu
-TARGET = G_DIV
+TARGETS = G_DIV test
 
-# Reguły budowania
-$(TARGET): ggp.o processid.o arg_parser.o output_file.o main.o
-	$(CC) ggp.o processid.o arg_parser.o output_file.o main.o -o $(TARGET) $(CFLAGS)
+# Foldery
+OBJDIR = out
+SRC_DIR = src
 
-ggp.o: ggp.c ggp.h processid.h
-	$(CC) $(CFLAGS) -c ggp.c -o ggp.o
+# Pliki źródłowe
+SRCS = $(SRC_DIR)/ggp.c $(SRC_DIR)/processid.c $(SRC_DIR)/output_file.c $(SRC_DIR)/main.c
 
-arg_parser.o: arg_parser.c 
-	$(CC) $(FLAGS) -c arg_parser.c -o arg_parser.o
+# Pliki obiektowe (np. out/ggp.o)
+OBJS = $(patsubst $(SRC_DIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 
-processid.o: processid.c processid.h arg_parser.h
-	$(CC) $(FLAGS) -c processid.c -o processid.o
+G_DIV: $(OBJS)
+	$(CC) $(OBJS) -o $@ $(CFLAGS)
 
-output_file.o: output_file.c output_file.h processid.h
-	$(CC) $(FLAGS) -c output_file.c -o output_file.o
+test: $(OBJDIR)/ggp.o $(OBJDIR)/test_ggp.o
 
-main.o: main.c output_file.h processid.h arg_parser.h ggp.h
-	$(CC) $(FLAGS) -c main.c -o main.o
+# Kompilacja każdego pliku .c do out/*.o
+$(OBJDIR)/test_ggp.o: $(SRC_DIR)/test_ggp.c $(SRC_DIR)/ggp.c $(SRC_DIR)/ggp.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+	
+$(OBJDIR)/ggp.o: $(SRC_DIR)/ggp.c $(SRC_DIR)/ggp.h $(SRC_DIR)/processid.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/processid.o: $(SRC_DIR)/processid.c $(SRC_DIR)/processid.h $(SRC_DIR)/arg_parser.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(FLAGS) -c $< -o $@
+
+$(OBJDIR)/output_file.o: $(SRC_DIR)/output_file.c $(SRC_DIR)/output_file.h $(SRC_DIR)/processid.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(FLAGS) -c $< -o $@
+
+$(OBJDIR)/main.o: $(SRC_DIR)/main.c $(SRC_DIR)/output_file.h $(SRC_DIR)/processid.h $(SRC_DIR)/arg_parser.h $(SRC_DIR)/ggp.h
+	@if not exist $(OBJDIR) mkdir $(OBJDIR)
+	$(CC) $(FLAGS) -c $< -o $@
+
+# Czyszczenie
 clean:
-	rm -f *.o $(TARGET)
+	rm -rf $(OBJDIR) $(TARGETS)
