@@ -19,8 +19,18 @@ void double_capacity(BoundryList* boundry, int* partition){
     boundry->capacity = boundry->capacity * 2;
 }
 
-void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part){
-    #pragma omp parallel
+void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part, int starting_vertex_index){
+    for(int i = graph->xadj[starting_vertex_index]; i < graph->xadj[starting_vertex_index+1]; i++){
+        int neighbour = graph->adjncy[i];
+        if(partition[neighbour] == 0){
+            if(boundry->size == boundry->capacity){
+                double_capacity(boundry, partition);
+            }
+            boundry->vertices[boundry->size++] = neighbour;
+        }
+    }
+    
+    /*#pragma omp parallel
     {
         //kazdy watek ma lokalne buffory
         int local_capacity = 128;
@@ -59,7 +69,7 @@ void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int curr
                 boundry->vertices[boundry->size++] = local_vertices[k];
             }
         }
-    }
+    }*/
 }
 
 void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part, int removed_vertex){
@@ -112,31 +122,60 @@ void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int curr
 }
 
 int calculate_cut_increase(Graph* graph, int* partition, int v, int current_part){
+    if(v > graph->xadj_capacity){
+        //printf("v = %d, xadj_cap = %d\n", v, graph->xadj_capacity);
+        //exit(EXIT_FAILURE);
+    }
     int cut_increase = 0;
+    //printf("przed petla\n");
     //dla danego wierzcholka (kandydata do dodania do aktualnej partycji) sprawdzane są partycje jego sąsiadów 
     //i liczona ilość przeciętych krawędzi w momencie przeniesienia wierzchołka
-    for(int i = graph->xadj[v]; i < graph->xadj[v+1]; i++){
-        int neighbour = graph->adjncy[i];
+    //if(v > graph->gr)
+    for(unsigned int i = graph->xadj[v]; i < graph->xadj[v+1]; i++){
+        //printf("w petli\n");
+        if( i > graph->adjncy_capacity){
+            //printf("i = %d, cap = %d\n", i, graph->adjncy_capacity);
+            //exit(EXIT_FAILURE);
+        }
+        unsigned int neighbour = graph->adjncy[i];
+        if(neighbour > 39740 || neighbour < 0){
+            //printf("neighbour z increase %d dla i = %d graph->adjncy_capacity = %d\n", neighbour, i, graph->adjncy_capacity);
+           // exit(EXIT_FAILURE);
+        }
+        //printf("graph adjc[i] %d\n", graph->adjncy[i]);
         if(partition[neighbour] == current_part){
+            //printf("w ifie\n");
             cut_increase --;
         }
         else{
+            //printf("w else\n");
             cut_increase ++;
         }
     }
+    //printf("po sprawdzeniach\n");
     return cut_increase;
 }
 
-static unsigned int simple_rand(unsigned int* seed) {
+/*static unsigned int simple_rand(unsigned int* seed) {
     *seed = (*seed * 1103515245 + 12345) & 0x7fffffff;
     return *seed;
-}
+}*/
 
 // Funkcja do szukania najlepszego wierzchołka do dodania
 int find_best_vertex(Graph* graph, BoundryList* boundry, int* partition, int current_part) {
     int best_vertex = -1;
     int min_cut_increase = INT_MAX;
-
+    for(int i = 0; i < boundry->size; i++){
+        int v = boundry->vertices[i];
+        int cut_increase = calculate_cut_increase(graph, partition, v, current_part);
+            if (cut_increase < min_cut_increase || 
+            (cut_increase == min_cut_increase && (rand() % 2 == 0))) {
+            min_cut_increase = cut_increase;
+            best_vertex = v;
+        }
+    }
+    return best_vertex;
+    /*
     #pragma omp parallel
     {
         int local_best_vertex = -1;
@@ -163,7 +202,7 @@ int find_best_vertex(Graph* graph, BoundryList* boundry, int* partition, int cur
             }
         }
     }
-    return best_vertex;
+    return best_vertex;*/
 }
 
 int count_edge_cuts(Graph* graph, int* partition){
@@ -183,10 +222,16 @@ int count_edge_cuts(Graph* graph, int* partition){
 // For the refinement phase, calculate cut change when moving v from from_part to to_part
 int calculate_cut_change(Graph* graph, int* partition, int v, int from_part, int to_part) {
     int cut_change = 0;
-    
+    if(v < 0 || v > 39740){
+        printf("%d\n", v);
+        exit(EXIT_FAILURE);
+    }
     for (int i = graph->xadj[v]; i < graph->xadj[v+1]; i++) {
-        int neighbor = graph->adjncy[i];
-        
+        unsigned int neighbor = graph->adjncy[i];
+        if(neighbor > 39740 || neighbor < 0){
+            printf("neighbour z change %d dla i = %d\n", neighbor, i);
+            //exit(EXIT_FAILURE);
+        }
         if (partition[neighbor] == from_part) {
             // Was not a cut, will become a cut
             cut_change++;
@@ -515,7 +560,7 @@ int* greedy_partition(Graph* graph, float imbalance, int num_parts){
 
     //petla kolejnych partycji podzialu
     for(int part = 1; part < num_parts; part++){
-        boundry.vertices = (int*)malloc(20 * sizeof(int));
+        boundry.vertices = (int*)calloc(20, sizeof(int));
         boundry.size = 0;
         boundry.capacity = 20;
         //znajdywanie dostepnych wierzcholkow dla danej partycji 
@@ -550,19 +595,22 @@ int* greedy_partition(Graph* graph, float imbalance, int num_parts){
         if(target_size > max_part_size)
             target_size = max_part_size;
         //tworzenie granicy wzgledem poczatkowego wierzcholka
-        create_boundry(graph, partition, &boundry, part);
+        create_boundry(graph, partition, &boundry, part, start);
         //petla wypelniajaca partycje
         while(current_size < target_size){
             int best_vertex = find_best_vertex(graph, &boundry, partition, part);
             //gdy nie znaleziono wierzcholka szukanie nowego punktu rozpoczecia (graf rozlaczny)
             if(best_vertex==-1){
+                //printf("nie znaleziono najlepszego wierzcholka!\n");
                 for(int i = 0; i < graph->num_vertices; i++){
                     if(partition[i]==0){
                         best_vertex = i;
+                        create_boundry(graph, partition, &boundry, part, best_vertex);
                         break;
                     }
                 }
             }
+            //printf("naj wierz %d\n", best_vertex);
             //gdy kompletna lipa z wierzcholkami 
             if(best_vertex == -1)
                 break;
@@ -626,7 +674,7 @@ void display_partition(Graph* graph, int* best_partition, int num_parts, int bes
         printf("PARTYCJA NR %d:\n\n", part);
         for(int n = 0; n < graph->num_vertices; n++){
             if(best_partition[n]==part){
-                printf("wierzcholek nr %d\n", n);
+                //printf("wierzcholek nr %d\n", n);
                 sum_part++;
             }
         }

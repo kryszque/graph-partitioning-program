@@ -15,7 +15,7 @@ typedef struct {
 } VertexMove;
 
 void double_capacity(BoundryList* boundry, int* partition);
-void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part);
+void create_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part, int starting_vertex_index);
 void update_boundry(Graph* graph, int* partition, BoundryList* boundry, int current_part, int removed_vertex);
 int calculate_cut_increase(Graph* graph, int* partition, int v, int current_part);
 int find_best_vertex(Graph* graph, BoundryList* boundry, int* partition, int current_part);

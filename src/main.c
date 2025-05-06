@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
         printf("Graph %d: %d vertices, %d edges\n",
                i, graph_list->graphs[i].num_vertices, graph_list->graphs[i].num_edges);
     }
-
+    printf("adjncy_cap = %d and xadj_cap = %d\n", graph_list->graphs->adjncy_capacity, graph_list->graphs->xadj_capacity);
 
     // Dane do podziału
     double imabalance = atof(argv[2])/100.0;

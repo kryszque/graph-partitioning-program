@@ -68,7 +68,7 @@ Graph* init_graph_list(int count) {
     for (int i = 0; i < count; i++) {
         graph_list[i].num_edges = 0;
         graph_list[i].num_vertices = 0;
-        graph_list[i].xadj_capacity = 2048;
+        graph_list[i].xadj_capacity = 65536; //HARDSTUCK LIMIT z jakiegos powodu nie rosnie BUG STULECIA KURWA
         graph_list[i].adjncy_capacity = 2048;
         graph_list[i].xadj = malloc(graph_list[i].xadj_capacity * sizeof(int));
         graph_list[i].adjncy = malloc(graph_list[i].adjncy_capacity * sizeof(int));
